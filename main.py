@@ -141,3 +141,8 @@ def predict(transaction: Transaction):
     except Exception as e:
         logger.error(f"Unexpected error occurred: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="An unexpected error occurred.")
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
