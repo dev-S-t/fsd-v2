@@ -5,6 +5,7 @@ import joblib
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 import tensorflow as tf
+import numpy as np
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -17,18 +18,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Load models and scaler
-try:
-    scaler = joblib.load("resources/scaler.pkl")
-    models = {
-        "knn_model": joblib.load("resources/knn_model.pkl"),
-        "random_forest": joblib.load("resources/random_forest_model.pkl"),
-        "xgboost": joblib.load("resources/xgboost_model.pkl"),
-        "neural_network": tf.keras.models.load_model("resources/neural_network_model.h5")
-    }
-except Exception as e:
-    raise Exception(f"Error loading models or scaler: {e}")
 
 # Define request body structure
 class Transaction(BaseModel):
@@ -43,6 +32,18 @@ class Transaction(BaseModel):
     trans_date: str
     trans_time: str
     state_encoded: float
+
+def load_model(model_name):
+    if model_name == "knn_model":
+        return joblib.load("resources/knn_model.pkl")
+    elif model_name == "random_forest":
+        return joblib.load("resources/random_forest_model.pkl")
+    elif model_name == "xgboost":
+        return joblib.load("resources/xgboost_model.pkl")
+    elif model_name == "neural_network":
+        return tf.keras.models.load_model("resources/neural_network_model.h5")
+    else:
+        raise HTTPException(status_code=400, detail="Invalid model name")
 
 def process_data(transaction: Transaction):
     # Create a DataFrame from the transaction data
@@ -83,25 +84,20 @@ def predict(transaction: Transaction):
         # Process the data
         df = process_data(transaction)
 
-        # Capture warnings during scaling
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            features_scaled = scaler.transform(df)
+        # Load the scaler and scale features
+        scaler = joblib.load("resources/scaler.pkl")
+        features_scaled = scaler.transform(df)
 
-        # Select the model
-        model = models.get(transaction.model_name)
-        if model is None:
-            raise HTTPException(status_code=400, detail="Invalid model name")
+        # Load the model
+        model = load_model(transaction.model_name)
 
-        # Capture warnings during prediction
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            if transaction.model_name == "neural_network":
-                prediction = model.predict(features_scaled)
-                prediction = prediction[0][0]
-            else:
-                prediction = model.predict_proba(features_scaled)
-                prediction = prediction[0][1]  # Assuming the second column is the probability of the positive class
+        # Make prediction
+        if transaction.model_name == "neural_network":
+            prediction = model.predict(features_scaled)
+            prediction = prediction[0][0]
+        else:
+            prediction = model.predict_proba(features_scaled)
+            prediction = prediction[0][1]  # Assuming the second column is the probability of the positive class
 
         # Convert prediction to a standard Python float
         prediction = float(prediction)
