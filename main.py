@@ -1,17 +1,13 @@
-import logging
 import warnings
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 import joblib
 import pandas as pd
-from datetime import datetime
 from sklearn.preprocessing import StandardScaler
 import tensorflow as tf
-import numpy as np
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
-
 
 # Allow requests from any origin
 app.add_middleware(
@@ -22,10 +18,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 # Load models and scaler
 try:
     scaler = joblib.load("resources/scaler.pkl")
@@ -35,10 +27,8 @@ try:
         "xgboost": joblib.load("resources/xgboost_model.pkl"),
         "neural_network": tf.keras.models.load_model("resources/neural_network_model.h5")
     }
-    logger.info("Models and scaler loaded successfully.")
 except Exception as e:
-    logger.error(f"Error loading models or scaler: {e}", exc_info=True)
-    raise
+    raise Exception(f"Error loading models or scaler: {e}")
 
 # Define request body structure
 class Transaction(BaseModel):
@@ -85,24 +75,19 @@ def process_data(transaction: Transaction):
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Error occurred: {str(exc)}", exc_info=True)
     return HTTPException(status_code=500, detail=str(exc))
 
 @app.post("/predict/")
 def predict(transaction: Transaction):
     try:
-        print("received: ", transaction)
         # Process the data
         df = process_data(transaction)
-        print("processed: ", df)
+
         # Capture warnings during scaling
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             features_scaled = scaler.transform(df)
-            if w:
-                for warning in w:
-                    logger.warning(f"Scaling warning: {warning.message}")
-        print("scaled: ", features_scaled)
+
         # Select the model
         model = models.get(transaction.model_name)
         if model is None:
@@ -117,33 +102,23 @@ def predict(transaction: Transaction):
             else:
                 prediction = model.predict_proba(features_scaled)
                 prediction = prediction[0][1]  # Assuming the second column is the probability of the positive class
-            
-            if w:
-                for warning in w:
-                    logger.warning(f"Prediction warning: {warning.message}")
-        print("prediction: ", prediction)
+
         # Convert prediction to a standard Python float
         prediction = float(prediction)
-        print("prediction_float: ", prediction)
+
         if transaction.output_type == "percentage":
-            return {"probability": (prediction *100) if prediction is not None else "N/A"}
-            #return {"prediction": prediction}
+            return {"probability": (prediction * 100) if prediction is not None else "N/A"}
         elif transaction.output_type == "is_fraud":
             result = 1 if prediction > 0.5 else 0
             return {"is_fraud": bool(result)}
-            #return {"prediction": result}
         else:
             raise HTTPException(status_code=400, detail="Invalid output type")
 
     except HTTPException as e:
-        logger.warning(f"HTTP exception occurred: {e.detail}")
         raise e
     except Exception as e:
-        logger.error(f"Unexpected error occurred: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="An unexpected error occurred.")
 
-# Run the application
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
